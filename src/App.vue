@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import PostComposer from '@/components/PostComposer.vue'
 import PostList from '@/components/PostList.vue'
 import { usePostsStore } from '@/stores/posts'
-import { MAX_CONTENT_LENGTH } from '@/types/post'
+import { MAX_CONTENT_LENGTH, type ReactionKind } from '@/types/post'
 
 const postsStore = usePostsStore()
 
@@ -33,6 +33,24 @@ async function handleSubmit(): Promise<void> {
 async function handleRemove(id: string): Promise<void> {
   await postsStore.removePost(id)
 }
+
+/** 交给列表判断某条某类互动是否在途，用于禁用按钮 */
+function isReacting(id: string, kind: ReactionKind): boolean {
+  return postsStore.isReacting(id, kind)
+}
+
+/** 目标状态取当前实体的反值：可点赞可取消，且计数以服务端返回为准 */
+async function handleLike(id: string): Promise<void> {
+  const post = postsStore.posts.find((item) => item.id === id)
+  if (!post) return
+  await postsStore.setLiked(id, !post.liked)
+}
+
+async function handleFavorite(id: string): Promise<void> {
+  const post = postsStore.posts.find((item) => item.id === id)
+  if (!post) return
+  await postsStore.setFavorited(id, !post.favorited)
+}
 </script>
 
 <template>
@@ -54,7 +72,14 @@ async function handleRemove(id: string): Promise<void> {
     />
 
     <p v-if="postsStore.loading" class="feed-loading" data-testid="feed-loading">正在加载…</p>
-    <PostList v-else :posts="postsStore.sortedPosts" @remove="handleRemove" />
+    <PostList
+      v-else
+      :posts="postsStore.sortedPosts"
+      :is-reacting="isReacting"
+      @remove="handleRemove"
+      @like="handleLike"
+      @favorite="handleFavorite"
+    />
   </main>
 </template>
 

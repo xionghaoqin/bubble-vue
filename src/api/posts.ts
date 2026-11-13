@@ -9,6 +9,7 @@ import type {
   Post,
   PostBody,
   PostListBody,
+  ReactionKind,
 } from '@/types/post'
 
 /** 接口前缀，保持单一来源 */
@@ -73,6 +74,34 @@ export async function createPost(content: string): Promise<Post> {
 
   const body = (await response.json()) as PostBody
   return body.post
+}
+
+/**
+ * POST /api/posts/:id/:kind 开启互动，DELETE 关闭互动 → 200 更新后的完整实体
+ * 由服务端返回的实体决定最终计数与状态（前端不做乐观更新）
+ */
+async function setReaction(id: string, kind: ReactionKind, active: boolean): Promise<Post> {
+  const response = await fetch(`${API_BASE}/posts/${encodeURIComponent(id)}/${kind}`, {
+    method: active ? 'POST' : 'DELETE',
+    headers: { Accept: 'application/json' },
+  })
+  if (!response.ok) throw await toApiError(response)
+
+  const body = (await response.json()) as PostBody | null
+  if (!body || !body.post) {
+    throw new ApiError('internal', response.status, '响应数据异常，请稍后重试')
+  }
+  return body.post
+}
+
+/** 点赞 / 取消点赞 */
+export function setLiked(id: string, liked: boolean): Promise<Post> {
+  return setReaction(id, 'like', liked)
+}
+
+/** 收藏 / 取消收藏 */
+export function setFavorited(id: string, favorited: boolean): Promise<Post> {
+  return setReaction(id, 'favorite', favorited)
 }
 
 /** DELETE /api/posts/:id → 204 无响应体 */

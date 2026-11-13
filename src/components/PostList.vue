@@ -1,10 +1,21 @@
 <script setup lang="ts">
 import PostItem from '@/components/PostItem.vue'
-import type { Post } from '@/types/post'
+import type { Post, ReactionKind } from '@/types/post'
 
-defineProps<{ posts: Post[] }>()
+withDefaults(
+  defineProps<{
+    posts: Post[]
+    /** 由 store 提供的在途判断，用于禁用对应按钮 */
+    isReacting?: (id: string, kind: ReactionKind) => boolean
+  }>(),
+  { isReacting: () => false }
+)
 
-const emit = defineEmits<{ remove: [id: string] }>()
+const emit = defineEmits<{
+  remove: [id: string]
+  like: [id: string]
+  favorite: [id: string]
+}>()
 </script>
 
 <template>
@@ -14,7 +25,11 @@ const emit = defineEmits<{ remove: [id: string] }>()
         v-for="post in posts"
         :key="post.id"
         :post="post"
+        :liking="isReacting(post.id, 'like')"
+        :favoriting="isReacting(post.id, 'favorite')"
         @remove="emit('remove', $event)"
+        @like="emit('like', $event)"
+        @favorite="emit('favorite', $event)"
       />
     </ul>
     <p v-else class="feed-empty" data-testid="feed-empty">还没有内容，来发第一条吧</p>
