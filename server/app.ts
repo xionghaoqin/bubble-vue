@@ -102,7 +102,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   const reactionHandler =
     (action: (id: string) => Post | undefined) =>
     (c: Context) => {
-      const post = action(c.req.param('id'))
+      // 未匹配到 :id 段时 param 为 undefined，与「内容不存在」同样处理
+      const id = c.req.param('id')
+      if (!id) {
+        return c.json(errorBody('not-found', POST_NOT_FOUND_MESSAGE), 404)
+      }
+
+      const post = action(id)
       if (!post) {
         return c.json(errorBody('not-found', POST_NOT_FOUND_MESSAGE), 404)
       }
