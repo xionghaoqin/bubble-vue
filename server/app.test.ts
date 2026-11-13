@@ -28,6 +28,31 @@ async function postRaw(body: string): Promise<Response> {
   })
 }
 
+/** 预置一条内容（id 固定为 p1），用于验证点赞/收藏路由 */
+function seededPostApp(): ReturnType<typeof createApp> {
+  const seed: Post = {
+    id: 'p1',
+    content: '互动测试',
+    createdAt: 1,
+    likeCount: 0,
+    liked: false,
+    favoriteCount: 0,
+    favorited: false,
+  }
+
+  return createApp({ store: createPostStore([seed]) })
+}
+
+/** 对指定内容发起点赞/收藏请求 */
+async function react(
+  target: ReturnType<typeof createApp>,
+  id: string,
+  kind: 'like' | 'favorite',
+  method: 'POST' | 'DELETE' = 'POST',
+): Promise<Response> {
+  return target.request(`/api/posts/${id}/${kind}`, { method })
+}
+
 describe('GET /api/health', () => {
   it('返回 200 与 { status: "ok" }', async () => {
     const res = await app.request('/api/health')
@@ -49,9 +74,33 @@ describe('GET /api/posts', () => {
   it('按 createdAt 倒序返回（新的在前）', async () => {
     const seeded = createApp({
       store: createPostStore([
-        { id: 'a', content: '最早', createdAt: 1 },
-        { id: 'b', content: '中间', createdAt: 2 },
-        { id: 'c', content: '最新', createdAt: 3 },
+        {
+          id: 'a',
+          content: '最早',
+          createdAt: 1,
+          likeCount: 0,
+          liked: false,
+          favoriteCount: 0,
+          favorited: false,
+        },
+        {
+          id: 'b',
+          content: '中间',
+          createdAt: 2,
+          likeCount: 0,
+          liked: false,
+          favoriteCount: 0,
+          favorited: false,
+        },
+        {
+          id: 'c',
+          content: '最新',
+          createdAt: 3,
+          likeCount: 0,
+          liked: false,
+          favoriteCount: 0,
+          favorited: false,
+        },
       ]),
     })
 
@@ -63,7 +112,17 @@ describe('GET /api/posts', () => {
 
   it('新建的内容排在列表最前面', async () => {
     const seeded = createApp({
-      store: createPostStore([{ id: 'old', content: '旧内容', createdAt: 1 }]),
+      store: createPostStore([
+        {
+          id: 'old',
+          content: '旧内容',
+          createdAt: 1,
+          likeCount: 0,
+          liked: false,
+          favoriteCount: 0,
+          favorited: false,
+        },
+      ]),
     })
     const created = (await (
       await seeded.request('/api/posts', {
@@ -283,11 +342,200 @@ describe('实例隔离', () => {
   })
 
   it('可通过注入 store 复用外部数据', async () => {
-    const store = createPostStore([{ id: 'seed', content: '种子', createdAt: 10 }] as Post[])
+    const store = createPostStore([
+      {
+        id: 'seed',
+        content: '种子',
+        createdAt: 10,
+        likeCount: 0,
+        liked: false,
+        favoriteCount: 0,
+        favorited: false,
+      },
+    ])
     const injected = createApp({ store })
 
     const res = await injected.request('/api/posts/seed')
 
     expect(res.status).toBe(200)
+  })
+})
+
+describe('POST /api/posts/:id/like', () => {
+  it('点赞成功返回 200 与更新后的完整实体', async () => {
+    const target = seededPostApp()
+
+    const res = await react(target, 'p1', 'like')
+    const body = (await res.json()) as PostBody
+
+    expect(res.status).toBe(200)
+    expect(body.post).toEqual({
+      id: 'p1',
+      content: '互动测试',
+      createdAt: 1,
+      likeCount: 1,
+      liked: true,
+      favoriteCount: 0,
+      favorited: false,
+    })
+  })
+
+  it('重复点赞幂等，计数保持 1', async () => {
+    const target = seededPostApp()
+
+    await react(target, 'p1', 'like')
+    const res = await react(target, 'p1', 'like')
+    const body = (await res.json()) as PostBody
+
+    expect(res.status).toBe(200)
+    expect(body.post.likeCount).toBe(1)
+    expect(body.post.liked).toBe(true)
+  })
+
+  it('列表与详情都能读到最新点赞状态', async () => {
+    const target = seededPostApp()
+
+    await react(target, 'p1', 'like')
+
+    const list = (await (await target.request('/api/posts')).json()) as PostListBody
+    const detail = (await (await target.request('/api/posts/p1')).json()) as PostBody
+
+    expect(list.posts[0].likeCount).toBe(1)
+    expect(list.posts[0].liked).toBe(true)
+    expect(detail.post.likeCount).toBe(1)
+    expect(detail.post.liked).toBe(true)
+  })
+
+  it('内容不存在返回 404 not-found', async () => {
+    const res = await react(app, 'not-exists', 'like')
+
+    expect(res.status).toBe(404)
+    expect(((await res.json()) as ApiErrorBody).error).toEqual({
+      code: 'not-found',
+      message: '内容不存在',
+    })
+  })
+})
+
+describe('DELETE /api/posts/:id/like', () => {
+  it('取消点赞返回 200 且计数回落为 0', async () => {
+    const target = seededPostApp()
+
+    await react(target, 'p1', 'like')
+    const res = await react(target, 'p1', 'like', 'DELETE')
+    const body = (await res.json()) as PostBody
+
+    expect(res.status).toBe(200)
+    expect(body.post.liked).toBe(false)
+    expect(body.post.likeCount).toBe(0)
+    expect(((await (await target.request('/api/posts/p1')).json()) as PostBody).post.liked).toBe(
+      false,
+    )
+  })
+
+  it('未点赞时取消也幂等，计数不为负', async () => {
+    const target = seededPostApp()
+
+    const res = await react(target, 'p1', 'like', 'DELETE')
+    const body = (await res.json()) as PostBody
+
+    expect(res.status).toBe(200)
+    expect(body.post.liked).toBe(false)
+    expect(body.post.likeCount).toBe(0)
+  })
+
+  it('内容不存在返回 404 not-found', async () => {
+    const res = await react(app, 'not-exists', 'like', 'DELETE')
+
+    expect(res.status).toBe(404)
+    expect(((await res.json()) as ApiErrorBody).error).toEqual({
+      code: 'not-found',
+      message: '内容不存在',
+    })
+  })
+})
+
+describe('POST /api/posts/:id/favorite', () => {
+  it('收藏成功返回 200 与更新后的完整实体', async () => {
+    const target = seededPostApp()
+
+    const res = await react(target, 'p1', 'favorite')
+    const body = (await res.json()) as PostBody
+
+    expect(res.status).toBe(200)
+    expect(body.post.favorited).toBe(true)
+    expect(body.post.favoriteCount).toBe(1)
+    expect(body.post.liked).toBe(false)
+    expect(body.post.likeCount).toBe(0)
+  })
+
+  it('重复收藏幂等，计数保持 1', async () => {
+    const target = seededPostApp()
+
+    await react(target, 'p1', 'favorite')
+    const body = (await (await react(target, 'p1', 'favorite')).json()) as PostBody
+
+    expect(body.post.favoriteCount).toBe(1)
+  })
+
+  it('内容不存在返回 404 not-found', async () => {
+    const res = await react(app, 'not-exists', 'favorite')
+
+    expect(res.status).toBe(404)
+    expect(((await res.json()) as ApiErrorBody).error).toEqual({
+      code: 'not-found',
+      message: '内容不存在',
+    })
+  })
+})
+
+describe('DELETE /api/posts/:id/favorite', () => {
+  it('取消收藏返回 200 且计数回落为 0', async () => {
+    const target = seededPostApp()
+
+    await react(target, 'p1', 'favorite')
+    const res = await react(target, 'p1', 'favorite', 'DELETE')
+    const body = (await res.json()) as PostBody
+
+    expect(res.status).toBe(200)
+    expect(body.post.favorited).toBe(false)
+    expect(body.post.favoriteCount).toBe(0)
+  })
+
+  it('未收藏时取消也幂等', async () => {
+    const target = seededPostApp()
+
+    const body = (await (await react(target, 'p1', 'favorite', 'DELETE')).json()) as PostBody
+
+    expect(body.post.favorited).toBe(false)
+    expect(body.post.favoriteCount).toBe(0)
+  })
+
+  it('内容不存在返回 404 not-found', async () => {
+    const res = await react(app, 'not-exists', 'favorite', 'DELETE')
+
+    expect(res.status).toBe(404)
+    expect(((await res.json()) as ApiErrorBody).error.code).toBe('not-found')
+  })
+})
+
+describe('点赞与收藏互不影响', () => {
+  it('同时点赞与收藏后两者状态独立保持', async () => {
+    const target = seededPostApp()
+
+    await react(target, 'p1', 'like')
+    await react(target, 'p1', 'favorite')
+
+    const both = (await (await target.request('/api/posts/p1')).json()) as PostBody
+    expect(both.post.liked).toBe(true)
+    expect(both.post.likeCount).toBe(1)
+    expect(both.post.favorited).toBe(true)
+    expect(both.post.favoriteCount).toBe(1)
+
+    const unliked = (await (await react(target, 'p1', 'like', 'DELETE')).json()) as PostBody
+    expect(unliked.post.liked).toBe(false)
+    expect(unliked.post.likeCount).toBe(0)
+    expect(unliked.post.favorited).toBe(true)
+    expect(unliked.post.favoriteCount).toBe(1)
   })
 })
