@@ -11,6 +11,7 @@ export type {
   Post,
   PostBody,
   PostListBody,
+  ReactionKind,
 } from '@shared/post'
 
 export { MAX_CONTENT_LENGTH } from '@shared/post'

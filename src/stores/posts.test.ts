@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { usePostsStore } from '@/stores/posts'
-import { MAX_CONTENT_LENGTH, type Post } from '@/types/post'
+import { MAX_CONTENT_LENGTH, type Post, type ReactionKind } from '@/types/post'
 
 // --- 内存假后端：把 fetch 换成受控实现，断言只看「请求 + 状态变化」 ---
 
@@ -9,6 +9,27 @@ interface RecordedCall {
   url: string
   method: string
   body?: string
+}
+
+/** 允许测试只写业务关心的字段，互动计数字段统一补默认值 */
+type PostFixture = Pick<Post, 'id' | 'content' | 'createdAt'> & Partial<Post>
+
+function definePost(fixture: PostFixture): Post {
+  return { likeCount: 0, liked: false, favoriteCount: 0, favorited: false, ...fixture }
+}
+
+/** 与服务端语义一致：计数只在状态真正翻转时增减 */
+function withReaction(post: Post, kind: ReactionKind, active: boolean): Post {
+  if (kind === 'like') {
+    if (post.liked === active) return post
+    return { ...post, liked: active, likeCount: Math.max(0, post.likeCount + (active ? 1 : -1)) }
+  }
+  if (post.favorited === active) return post
+  return {
+    ...post,
+    favorited: active,
+    favoriteCount: Math.max(0, post.favoriteCount + (active ? 1 : -1)),
+  }
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -39,20 +60,23 @@ function noContentResponse(): Response {
   } as unknown as Response
 }
 
-function createFetchMock(initialPosts: Post[] = []) {
-  const db = new Map(initialPosts.map((post) => [post.id, post]))
+function createFetchMock(initialPosts: PostFixture[] = []) {
+  const db = new Map(initialPosts.map((fixture) => [fixture.id, definePost(fixture)]))
   const calls: RecordedCall[] = []
   let nextId = 1
 
   const state = {
     /** 非空时 GET 列表会挂起，直到测试手动 resolve */
     holdList: null as Promise<void> | null,
+    /** 非空时点赞/收藏请求会挂起，用于验证进行中状态与并发去重 */
+    holdReaction: null as Promise<void> | null,
     /** true 时所有请求立即 reject，模拟断网 */
     offline: false,
     failures: {
       list: null as Response | null,
       create: null as Response | null,
       remove: null as Response | null,
+      reaction: null as Response | null,
     },
   }
 
@@ -83,10 +107,25 @@ function createFetchMock(initialPosts: Post[] = []) {
           400
         )
       }
-      const post: Post = { id: `srv-${nextId}`, content, createdAt: 1_000_000 + nextId }
+      const post = definePost({ id: `srv-${nextId}`, content, createdAt: 1_000_000 + nextId })
       nextId += 1
       db.set(post.id, post)
       return jsonResponse({ post }, 201)
+    }
+
+    const reactionMatch = /^\/api\/posts\/([^/]+)\/(like|favorite)$/.exec(url)
+    if (reactionMatch && (method === 'POST' || method === 'DELETE')) {
+      if (state.holdReaction) await state.holdReaction
+      if (state.failures.reaction) return state.failures.reaction
+      const id = decodeURIComponent(reactionMatch[1] as string)
+      const kind = reactionMatch[2] as ReactionKind
+      const current = db.get(id)
+      if (!current) {
+        return jsonResponse({ error: { code: 'not-found', message: '内容不存在' } }, 404)
+      }
+      const post = withReaction(current, kind, method === 'POST')
+      db.set(post.id, post)
+      return jsonResponse({ post })
     }
 
     const deleteMatch = /^\/api\/posts\/([^/]+)$/.exec(url)
@@ -110,11 +149,15 @@ function createFetchMock(initialPosts: Post[] = []) {
 }
 
 /** 每个用例独立：新 pinia + 新假后端 */
-function setup(initialPosts: Post[] = []) {
+function setup(initialPosts: PostFixture[] = []) {
   const api = createFetchMock(initialPosts)
   vi.stubGlobal('fetch', api.fetchMock)
   const store = usePostsStore()
   return { api, store }
+}
+
+function reactionCalls(api: ReturnType<typeof createFetchMock>): RecordedCall[] {
+  return api.calls.filter((call) => /\/(like|favorite)$/.test(call.url))
 }
 
 describe('posts store', () => {
@@ -130,6 +173,7 @@ describe('posts store', () => {
     expect(store.isEmpty).toBe(true)
     expect(store.loading).toBe(false)
     expect(store.error).toBeNull()
+    expect(store.isReacting('any', 'like')).toBe(false)
     // 构造 store 不应该自动请求，加载由调用方（页面 onMounted）控制
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -349,11 +393,185 @@ describe('posts store', () => {
     const { api, store } = setup()
     expect(store.total).toBe(0)
 
-    api.db.set('x', { id: 'x', content: '外部写入', createdAt: 5 })
+    api.db.set('x', definePost({ id: 'x', content: '外部写入', createdAt: 5 }))
     await store.reload()
 
     expect(store.total).toBe(1)
     expect(store.posts[0]?.content).toBe('外部写入')
     expect(api.calls).toHaveLength(1)
+  })
+
+  // --- 点赞 ---
+
+  it('setLiked(true) 调用 POST /like 并用服务端实体替换列表项', async () => {
+    const { api, store } = setup([
+      { id: 'a', content: '第一条', createdAt: 2 },
+      { id: 'b', content: '第二条', createdAt: 1 },
+    ])
+    await store.load()
+
+    const ok = await store.setLiked('a', true)
+
+    expect(ok).toBe(true)
+    expect(reactionCalls(api).at(-1)).toMatchObject({ url: '/api/posts/a/like', method: 'POST' })
+    expect(store.posts.map((post) => post.id)).toEqual(['a', 'b'])
+    expect(store.posts[0]).toMatchObject({ liked: true, likeCount: 1, favoriteCount: 0 })
+    expect(store.error).toBeNull()
+  })
+
+  it('setLiked(false) 调用 DELETE /like 取消点赞', async () => {
+    const { api, store } = setup([
+      { id: 'a', content: '已点赞', createdAt: 1, liked: true, likeCount: 4 },
+    ])
+    await store.load()
+
+    const ok = await store.setLiked('a', false)
+
+    expect(ok).toBe(true)
+    expect(reactionCalls(api).at(-1)).toMatchObject({ url: '/api/posts/a/like', method: 'DELETE' })
+    expect(store.posts[0]).toMatchObject({ liked: false, likeCount: 3 })
+  })
+
+  it('setLiked 只影响目标条目，其余条目保持不变', async () => {
+    const { store } = setup([
+      { id: 'a', content: 'A', createdAt: 2, likeCount: 2 },
+      { id: 'b', content: 'B', createdAt: 1, likeCount: 9 },
+    ])
+    await store.load()
+
+    await store.setLiked('a', true)
+
+    expect(store.posts[0]).toMatchObject({ likeCount: 3, liked: true })
+    expect(store.posts[1]).toMatchObject({ likeCount: 9, liked: false })
+  })
+
+  // --- 收藏 ---
+
+  it('setFavorited(true) 调用 POST /favorite 且不影响点赞状态', async () => {
+    const { api, store } = setup([
+      { id: 'a', content: '内容', createdAt: 1, liked: true, likeCount: 1 },
+    ])
+    await store.load()
+
+    const ok = await store.setFavorited('a', true)
+
+    expect(ok).toBe(true)
+    expect(reactionCalls(api).at(-1)).toMatchObject({
+      url: '/api/posts/a/favorite',
+      method: 'POST',
+    })
+    expect(store.posts[0]).toMatchObject({
+      favorited: true,
+      favoriteCount: 1,
+      liked: true,
+      likeCount: 1,
+    })
+  })
+
+  it('setFavorited(false) 调用 DELETE /favorite 取消收藏', async () => {
+    const { api, store } = setup([
+      { id: 'a', content: '内容', createdAt: 1, favorited: true, favoriteCount: 2 },
+    ])
+    await store.load()
+
+    await expect(store.setFavorited('a', false)).resolves.toBe(true)
+
+    expect(reactionCalls(api).at(-1)).toMatchObject({
+      url: '/api/posts/a/favorite',
+      method: 'DELETE',
+    })
+    expect(store.posts[0]).toMatchObject({ favorited: false, favoriteCount: 1 })
+  })
+
+  // --- 失败与并发 ---
+
+  it('互动失败时返回 false、保留原状态并暴露可展示错误', async () => {
+    const { api, store } = setup([{ id: 'a', content: '内容', createdAt: 1, likeCount: 2 }])
+    await store.load()
+    api.state.failures.reaction = jsonResponse(
+      { error: { code: 'not-found', message: '内容不存在' } },
+      404
+    )
+
+    const ok = await store.setLiked('a', true)
+
+    expect(ok).toBe(false)
+    expect(store.posts[0]).toMatchObject({ liked: false, likeCount: 2 })
+    expect(store.error).toBe('内容不存在')
+    expect(store.isReacting('a', 'like')).toBe(false)
+  })
+
+  it('互动遇到网络异常时退化为通用文案且不抛异常', async () => {
+    const { api, store } = setup([{ id: 'a', content: '内容', createdAt: 1 }])
+    await store.load()
+    api.state.offline = true
+
+    await expect(store.setFavorited('a', true)).resolves.toBe(false)
+
+    expect(store.posts[0]).toMatchObject({ favorited: false, favoriteCount: 0 })
+    expect(store.error).toBe('操作失败，请稍后重试')
+  })
+
+  it('进行中暴露 isReacting，重复请求被去重只发一次', async () => {
+    const { api, store } = setup([{ id: 'a', content: '内容', createdAt: 1 }])
+    await store.load()
+    let release!: () => void
+    api.state.holdReaction = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const first = store.setLiked('a', true)
+    expect(store.isReacting('a', 'like')).toBe(true)
+
+    const duplicate = await store.setLiked('a', true)
+    expect(duplicate).toBe(false)
+    expect(reactionCalls(api)).toHaveLength(1)
+
+    release()
+    await expect(first).resolves.toBe(true)
+    expect(store.isReacting('a', 'like')).toBe(false)
+    expect(store.posts[0]).toMatchObject({ liked: true, likeCount: 1 })
+  })
+
+  it('同一条目的点赞与收藏互不阻塞，各自独立去重', async () => {
+    const { api, store } = setup([{ id: 'a', content: '内容', createdAt: 1 }])
+    await store.load()
+    let release!: () => void
+    api.state.holdReaction = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const liking = store.setLiked('a', true)
+    const favoriting = store.setFavorited('a', true)
+
+    expect(store.isReacting('a', 'like')).toBe(true)
+    expect(store.isReacting('a', 'favorite')).toBe(true)
+    expect(store.isReacting('b', 'like')).toBe(false)
+    expect(reactionCalls(api)).toHaveLength(2)
+
+    release()
+    await expect(Promise.all([liking, favoriting])).resolves.toEqual([true, true])
+    expect(store.posts[0]).toMatchObject({
+      liked: true,
+      likeCount: 1,
+      favorited: true,
+      favoriteCount: 1,
+    })
+    expect(store.isReacting('a', 'like')).toBe(false)
+    expect(store.isReacting('a', 'favorite')).toBe(false)
+  })
+
+  it('互动成功后清除上一次失败留下的 error', async () => {
+    const { api, store } = setup([{ id: 'a', content: '内容', createdAt: 1 }])
+    await store.load()
+    api.state.offline = true
+    await store.setLiked('a', true)
+    expect(store.error).toBe('操作失败，请稍后重试')
+
+    api.state.offline = false
+    await expect(store.setLiked('a', true)).resolves.toBe(true)
+
+    expect(store.error).toBeNull()
+    expect(store.posts[0]).toMatchObject({ liked: true, likeCount: 1 })
   })
 })
