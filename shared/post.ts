@@ -8,7 +8,18 @@ export interface Post {
   id: string
   content: string
   createdAt: number
+  /** 点赞总数 */
+  likeCount: number
+  /** 当前访客是否已点赞 */
+  liked: boolean
+  /** 收藏总数 */
+  favoriteCount: number
+  /** 当前访客是否已收藏 */
+  favorited: boolean
 }
+
+/** 互动类型：点赞 / 收藏 */
+export type ReactionKind = 'like' | 'favorite'
 
 /** 内容长度上限（字符数） */
 export const MAX_CONTENT_LENGTH = 280
@@ -35,7 +46,7 @@ export interface PostListBody {
   posts: Post[]
 }
 
-/** 单条资源响应体 */
+/** 单条资源响应体；点赞/收藏接口同样返回更新后的完整实体 */
 export interface PostBody {
   post: Post
 }
