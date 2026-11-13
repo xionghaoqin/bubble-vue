@@ -1,0 +1,133 @@
+/* ============ 设计令牌 ============ */
+:root {
+  --bg: #07070e;
+  --ink: #f4f5ff;
+  --muted: #9aa0c0;
+  --violet: #8b5cf6;
+  --cyan: #22d3ee;
+  --pink: #f472b6;
+  --amber: #fbbf24;
+  --danger: #ff5d73;
+  --glass: rgba(255, 255, 255, 0.05);
+  --stroke: rgba(255, 255, 255, 0.1);
+  --radius-lg: 22px;
+  --radius-md: 16px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  color-scheme: dark;
+}
+
+/* ============ 基础 ============ */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  padding: 32px 16px 72px;
+  background:
+    radial-gradient(circle at 12% -5%, #1d1140 0%, transparent 55%),
+    radial-gradient(circle at 88% 8%, #062b3b 0%, transparent 50%),
+    var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  overflow-x: hidden;
+}
+
+/* 极光光斑：营造流动的霓虹氛围 */
+body::before,
+body::after {
+  position: fixed;
+  width: 46vmax;
+  height: 46vmax;
+  border-radius: 50%;
+  content: '';
+  filter: blur(90px);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 0;
+}
+
+body::before {
+  top: -16vmax;
+  left: -12vmax;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.7), transparent 65%);
+  animation: drift-a 20s ease-in-out infinite alternate;
+}
+
+body::after {
+  right: -14vmax;
+  bottom: -18vmax;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.5), transparent 65%);
+  animation: drift-b 26s ease-in-out infinite alternate;
+}
+
+/* ============ 全局动效 ============ */
+@keyframes hueflow {
+  from {
+    background-position: 0% 50%;
+  }
+
+  to {
+    background-position: 300% 50%;
+  }
+}
+
+@keyframes drift-a {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  to {
+    transform: translate3d(14vmax, 10vmax, 0) scale(1.15);
+  }
+}
+
+@keyframes drift-b {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.1);
+  }
+
+  to {
+    transform: translate3d(-12vmax, -8vmax, 0) scale(0.95);
+  }
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ============ 响应式与无障碍 ============ */
+@media (max-width: 640px) {
+  body {
+    padding: 20px 12px 48px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
