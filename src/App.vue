@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import PostComposer from '@/components/PostComposer.vue'
 import PostList from '@/components/PostList.vue'
 import { usePostsStore } from '@/stores/posts'
@@ -8,22 +8,30 @@ import { MAX_CONTENT_LENGTH } from '@/types/post'
 const postsStore = usePostsStore()
 
 const draft = ref('')
-const errorMessage = ref<string | null>(null)
+/** 本地校验 / 发布失败的文案，优先于 store 的接口错误展示 */
+const formError = ref<string | null>(null)
 
-function handleSubmit(): void {
-  const result = postsStore.addPost(draft.value)
+// composer 只有一个错误位：本次操作的错误优先，否则展示 store 的接口错误
+const errorMessage = computed(() => formError.value ?? postsStore.error)
+
+onMounted(() => {
+  void postsStore.load()
+})
+
+async function handleSubmit(): Promise<void> {
+  formError.value = null
+  const result = await postsStore.addPost(draft.value)
 
   if (result.ok) {
     draft.value = ''
-    errorMessage.value = null
     return
   }
 
-  errorMessage.value = result.message
+  formError.value = result.message
 }
 
-function handleRemove(id: string): void {
-  postsStore.removePost(id)
+async function handleRemove(id: string): Promise<void> {
+  await postsStore.removePost(id)
 }
 </script>
 
@@ -45,7 +53,8 @@ function handleRemove(id: string): void {
       @submit="handleSubmit"
     />
 
-    <PostList :posts="postsStore.sortedPosts" @remove="handleRemove" />
+    <p v-if="postsStore.loading" class="feed-loading" data-testid="feed-loading">正在加载…</p>
+    <PostList v-else :posts="postsStore.sortedPosts" @remove="handleRemove" />
   </main>
 </template>
 
@@ -108,6 +117,15 @@ function handleRemove(id: string): void {
   color: var(--muted);
   font-size: 13px;
   letter-spacing: 1px;
+}
+
+.feed-loading {
+  margin-top: 24px;
+  padding: 36px 0;
+  color: var(--muted);
+  font-size: 14px;
+  letter-spacing: 1px;
+  text-align: center;
 }
 
 @media (max-width: 640px) {

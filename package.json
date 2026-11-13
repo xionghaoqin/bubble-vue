@@ -3,9 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "泡泡 bubble —— Vue 3 + Pinia + localStorage 的微型发布应用（TDD 实现）",
+  "description": "泡泡 bubble —— Vue 3 + Pinia + Hono(RESTful + 内存存储) 的微型发布应用（TDD 实现）",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -n web,api -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/index.ts",
+    "start:api": "tsx server/index.ts",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest",
@@ -14,17 +17,22 @@
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.8",
+    "hono": "^4.13.18",
     "pinia": "^3.0.4",
     "vue": "^3.5.45"
   },
   "devDependencies": {
     "@jridgewell/sourcemap-codec": "^1.5.0",
+    "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^6.0.11",
     "@vue/test-utils": "^2.5.1",
+    "concurrently": "^10.0.7",
     "csstype": "^3.1.3",
     "entities": "^6.0.1",
     "happy-dom": "^21.0.4",
     "nostics": "^1.3.0",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vite": "^8.3.8",
     "vitest": "^5.1.0",

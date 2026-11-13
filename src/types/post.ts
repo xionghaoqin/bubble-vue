@@ -1,18 +1,16 @@
-/** 一条泡泡内容 */
-export interface Post {
-  id: string
-  content: string
-  createdAt: number
-}
+/**
+ * 前端类型入口：全部复用 `shared/post.ts` 的契约，
+ * 保证与 Hono 后端使用同一套字段与常量。
+ */
+export type {
+  AddPostFailure,
+  AddPostResult,
+  ApiErrorBody,
+  ApiErrorCode,
+  CreatePostBody,
+  Post,
+  PostBody,
+  PostListBody,
+} from '@shared/post'
 
-/** 内容长度上限（字符数） */
-export const MAX_CONTENT_LENGTH = 280
-
-/** 本地存储键，与原生版本保持一致，便于数据迁移 */
-export const STORAGE_KEY = 'bubble.posts'
-
-export type AddPostFailure = 'empty' | 'too-long'
-
-export type AddPostResult =
-  | { ok: true; post: Post }
-  | { ok: false; reason: AddPostFailure; message: string }
+export { MAX_CONTENT_LENGTH } from '@shared/post'
