@@ -1,9 +1,10 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
 import {
   MAX_CONTENT_LENGTH,
   type ApiErrorBody,
   type ApiErrorCode,
+  type Post,
   type PostBody,
   type PostListBody,
 } from '../shared/post'
@@ -93,6 +94,27 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
     return c.body(null, 204)
   })
+
+  /**
+   * 点赞 / 收藏共用处理器：POST 置为、DELETE 取消，
+   * 两者都是幂等操作，成功统一返回更新后的完整实体。
+   */
+  const reactionHandler =
+    (action: (id: string) => Post | undefined) =>
+    (c: Context) => {
+      const post = action(c.req.param('id'))
+      if (!post) {
+        return c.json(errorBody('not-found', POST_NOT_FOUND_MESSAGE), 404)
+      }
+
+      const body: PostBody = { post }
+      return c.json(body)
+    }
+
+  app.post('/api/posts/:id/like', reactionHandler(store.like))
+  app.delete('/api/posts/:id/like', reactionHandler(store.unlike))
+  app.post('/api/posts/:id/favorite', reactionHandler(store.favorite))
+  app.delete('/api/posts/:id/favorite', reactionHandler(store.unfavorite))
 
   app.notFound((c) => c.json(errorBody('not-found', ROUTE_NOT_FOUND_MESSAGE), 404))
 
